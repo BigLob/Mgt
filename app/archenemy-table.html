@@ -64,6 +64,11 @@ section { display: flex; flex-direction: column; gap: 10px; }
 .players input, .search { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 44px; width: 100%; min-width: 0; }
 .presets { display: flex; flex-wrap: wrap; gap: 8px; }
 .presets button { font-size: 14px; padding: 8px 12px; }
+.dealer { display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.dealer h3, h3.mini { margin: 0; font-size: 13px; font-weight: 700; }
+.set-toggle span { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.set-toggle[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); }
+.set-toggle[aria-pressed="true"]::before { content: "✓ "; color: var(--accent); }
 .set-group { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .set-group > h3 { margin: 0; padding: 10px 12px; background: var(--surface); font-size: 13px; font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
 .set-group > h3 span { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -158,7 +163,10 @@ summary { padding: 12px; cursor: pointer; font-size: 13px; font-weight: 700; col
   };
   // Schemes Wizards flags as broken with a shared hero life total.
   const SHARED_LIFE_WARN = new Set(["Mortal Flesh Is Weak"]);
-  const MIN_DECK = 10, START_LIFE = 60, POISON_OUT = 10, KEY = "archenemy-table-v1";
+  const MIN_DECK = 10, DEAL = 20, START_LIFE = 60, POISON_OUT = 10, KEY = "archenemy-table-v1";
+  // Everything printed in each set, reprints included (Duskmourn's 40 = its four preset decks).
+  const SET_POOLS = Object.fromEntries(SETS.map(([t, names]) => [t, t.startsWith("Duskmourn") ? [...new Set([...names, ...Object.values(PRESETS).flat()])] : names]));
+  const poolFor = sets => [...new Set(sets.flatMap(t => SET_POOLS[t] || []))].filter(n => !SHARED_LIFE_WARN.has(n));
 
   const scry = n => "https://scryfall.com/search?q=" + encodeURIComponent('!"' + n + '" t:scheme');
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -173,7 +181,7 @@ summary { padding: 12px; cursor: pointer; font-size: 13px; font-weight: 700; col
   const now = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   const fresh = () => ({
-    phase: "setup", selected: PRESETS["Jump Scare"].slice(), filter: "",
+    phase: "setup", selected: PRESETS["Jump Scare"].slice(), filter: "", sets: SETS.map(s => s[0]),
     names: { ae: "Archenemy", h: ["Hero 1", "Hero 2", "Hero 3"] },
     game: null, undo: [],
   });
@@ -264,6 +272,7 @@ summary { padding: 12px; cursor: pointer; font-size: 13px; font-weight: 700; col
   function renderSetup() {
     const sel = new Set(S.selected), n = sel.size, ready = n >= MIN_DECK;
     const f = S.filter.trim().toLowerCase();
+    const sets = new Set(S.sets || []), pool = poolFor([...sets]);
     const groups = SETS.map(([title, names]) => {
       const shown = names.filter(x => !f || x.toLowerCase().includes(f));
       if (!shown.length) return "";
@@ -287,10 +296,18 @@ summary { padding: 12px; cursor: pointer; font-size: 13px; font-weight: 700; col
       </section>
       <section>
         <h2>Scheme deck</h2>
-        <p class="sub">10 or more schemes, no repeats. Start from a Duskmourn deck or pick your own.</p>
+        <p class="sub">10 or more schemes, no repeats. Deal a random deck from the sets you choose, start from a Duskmourn deck, or pick your own.</p>
+        <div class="dealer">
+          <h3>Random from sets</h3>
+          <div class="presets">
+            ${SETS.map(([t]) => `<button class="set-toggle" data-set="${esc(t)}" aria-pressed="${sets.has(t)}">${esc(t)} <span>${SET_POOLS[t].length}</span></button>`).join("")}
+          </div>
+          <button class="btn-primary" data-act="deal"${pool.length ? "" : " disabled"}>Deal ${Math.min(DEAL, pool.length)} random</button>
+          <p class="note">${pool.length ? `Picks from ${pool.length} schemes in the chosen sets${pool.length < DEAL ? `. That's fewer than ${DEAL}, so you get all of them` : ""}.${sets.has("Archenemy (2010)") ? " Mortal Flesh Is Weak is left out." : ""}` : "Choose at least one set."}</p>
+        </div>
+        <h3 class="mini">Duskmourn Commander decks</h3>
         <div class="presets">
           ${Object.keys(PRESETS).map(p => `<button data-preset="${esc(p)}">${esc(p)}</button>`).join("")}
-          <button data-preset="__random">Random 10</button>
           <button data-preset="__clear" class="btn-quiet">Clear</button>
         </div>
         <input class="search" id="filter" type="search" placeholder="Filter schemes by name" value="${esc(S.filter)}" autocomplete="off">
@@ -383,10 +400,16 @@ summary { padding: 12px; cursor: pointer; font-size: 13px; font-weight: 700; col
     if (b.dataset.preset) {
       const p = b.dataset.preset;
       if (p === "__clear") S.selected = [];
-      else if (p === "__random") S.selected = shuffle(SETS.flatMap(s => s[1]).filter(n => !SHARED_LIFE_WARN.has(n))).slice(0, MIN_DECK);
       else S.selected = PRESETS[p].slice();
       return render();
     }
+    if (b.dataset.set) {
+      const t = b.dataset.set, cur = new Set(S.sets || []);
+      cur.has(t) ? cur.delete(t) : cur.add(t);
+      S.sets = SETS.map(s => s[0]).filter(x => cur.has(x));
+      return render();
+    }
+    if (b.dataset.act === "deal") { S.selected = shuffle(poolFor(S.sets || [])).slice(0, DEAL); return render(); }
     if (b.dataset.life) { life(b.dataset.life, d); return render(); }
     if (b.dataset.poison) { poison(b.dataset.poison === "ae" ? "ae" : Number(b.dataset.poison), d); return render(); }
     if (b.dataset.abandon != null) { abandon(Number(b.dataset.abandon)); return render(); }
